@@ -1,0 +1,26 @@
+repos:
+  - repo: local
+    hooks:
+      - id: backend-ruff-format
+        name: backend-ruff-format
+        entry: uv run --project backend --extra dev ruff format backend tests/backend
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: backend-ruff-lint
+        name: backend-ruff-lint
+        entry: uv run --project backend --extra dev ruff check backend tests/backend
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: backend-tests-coverage
+        name: backend-tests-coverage
+        entry: uv run --project backend --extra test pytest tests/backend --cov=backend --cov-report=term-missing
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
