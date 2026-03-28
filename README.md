@@ -41,7 +41,7 @@ Core components:
 - **Tools**: web search and RAG retrieval for external context.
 - **Synthesis**: Ollama chat model composes the final response.
 - **SQLite**: source of truth for sessions, turns, summaries, and checkpoints.
-- **Qdrant**: vector index for RAG chunks and durable memory embeddings.
+- **Qdrant**: vector database for RAG chunks and durable memory embeddings.
 
 ## Prerequisites
 
