@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from threading import Lock
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-from app.config.settings import Settings, get_settings
-from app.observability.logging_utils import log_event, sanitize_text
+from rag_mcp.config import RagSettings
+from rag_mcp.ingest.chunking import ChunkRecord
+
+logger = logging.getLogger(__name__)
 
 
 class RagStoreError(RuntimeError):
@@ -26,7 +27,6 @@ class RetrievedChunk:
     metadata: dict[str, str]
 
 
-logger = logging.getLogger(__name__)
 _LOCAL_CLIENTS_BY_PATH: dict[str, QdrantClient] = {}
 _LOCAL_CLIENTS_LOCK = Lock()
 
@@ -34,11 +34,11 @@ _LOCAL_CLIENTS_LOCK = Lock()
 class QdrantStore:
     def __init__(
         self,
-        settings: Settings | None = None,
+        settings: RagSettings | None = None,
         client: QdrantClient | None = None,
         collection_name: str | None = None,
     ) -> None:
-        self._settings = settings or get_settings()
+        self._settings = settings or RagSettings()
         self._client = client
         self._collection_name = collection_name or self._settings.qdrant_collection_name
 
@@ -46,7 +46,7 @@ class QdrantStore:
     def collection_name(self) -> str:
         return self._collection_name
 
-    def for_collection(self, collection_name: str) -> "QdrantStore":
+    def for_collection(self, collection_name: str) -> QdrantStore:
         return QdrantStore(
             settings=self._settings,
             client=self._client,
@@ -54,8 +54,13 @@ class QdrantStore:
         )
 
     def ensure_collection(self, vector_size: int) -> None:
-        started_at = time.perf_counter()
-        resolved_metric = models.Distance.COSINE
+        distance_map = {
+            "cosine": models.Distance.COSINE,
+            "dot": models.Distance.DOT,
+            "euclid": models.Distance.EUCLID,
+        }
+        normalized_metric = str(self._settings.rag_distance_metric).strip().lower()
+        resolved_metric = distance_map.get(normalized_metric, models.Distance.COSINE)
         try:
             client = self._get_client()
             exists = client.collection_exists(collection_name=self._collection_name)
@@ -67,31 +72,36 @@ class QdrantStore:
                         distance=resolved_metric,
                     ),
                 )
-            log_event(
-                logger,
-                "rag.store.ensure_collection.end",
-                collection=self._collection_name,
-                vector_size=vector_size,
-                collection_created=not exists,
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-            )
         except Exception as exc:
-            log_event(
-                logger,
-                "rag.store.ensure_collection.error",
-                collection=self._collection_name,
-                error_type=type(exc).__name__,
-                error_message=sanitize_text(
-                    str(exc),
-                    self._settings.log_payload_mode,
-                    self._settings.log_payload_max_chars,
-                ),
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-            )
             raise RagStoreError("Failed to ensure Qdrant collection") from exc
 
+    def upsert_chunks(self, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        if len(chunks) != len(vectors):
+            raise RagStoreError("Chunks and vectors length mismatch")
+        try:
+            client = self._get_client()
+            points = []
+            for chunk, vector in zip(chunks, vectors, strict=True):
+                payload = {
+                    "document_id": chunk.document_id,
+                    "chunk_index": chunk.chunk_index,
+                    "title": chunk.title,
+                    "text": chunk.text,
+                    "url": chunk.url,
+                    "metadata": chunk.metadata,
+                }
+                points.append(
+                    models.PointStruct(
+                        id=chunk.point_id,
+                        vector=vector,
+                        payload=payload,
+                    )
+                )
+            client.upsert(collection_name=self._collection_name, points=points)
+        except Exception as exc:
+            raise RagStoreError("Failed to upsert chunks into Qdrant") from exc
+
     def search(self, query_vector: list[float], limit: int) -> list[RetrievedChunk]:
-        started_at = time.perf_counter()
         try:
             client = self._get_client()
             if hasattr(client, "query_points"):
@@ -128,28 +138,8 @@ class QdrantStore:
                         metadata=metadata if isinstance(metadata, dict) else {},
                     )
                 )
-            log_event(
-                logger,
-                "rag.store.search.end",
-                collection=self._collection_name,
-                limit=limit,
-                hit_count=len(results),
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-            )
             return results
         except Exception as exc:
-            log_event(
-                logger,
-                "rag.store.search.error",
-                collection=self._collection_name,
-                error_type=type(exc).__name__,
-                error_message=sanitize_text(
-                    str(exc),
-                    self._settings.log_payload_mode,
-                    self._settings.log_payload_max_chars,
-                ),
-                duration_ms=int((time.perf_counter() - started_at) * 1000),
-            )
             raise RagStoreError("Failed to query Qdrant collection") from exc
 
     def _get_client(self) -> QdrantClient:

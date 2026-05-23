@@ -1,6 +1,7 @@
 import sqlite3
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -11,11 +12,13 @@ if str(ROOT_DIR) not in sys.path:
 from backend.app.api.routes_chat import get_research_agent_service  # noqa: E402
 from backend.app.config.settings import Settings  # noqa: E402
 from backend.app.graph import ResearchAgentService  # noqa: E402
+from backend.app.graph.research_graph import build_research_graph  # noqa: E402
 from backend.app.llm.ollama_chat import ChatResponse as OllamaChatResponse  # noqa: E402
 from backend.app.main import app  # noqa: E402
+from backend.app.mcp.client import MCPClient  # noqa: E402
 from backend.app.memory.service import MemoryService  # noqa: E402
+from backend.app.schemas.tools import ToolResult, ToolSpec  # noqa: E402
 from backend.app.storage import SQLiteStore  # noqa: E402
-from backend.app.tools.base import ToolResult, ToolSpec  # noqa: E402
 
 
 class StubOllamaService:
@@ -29,10 +32,11 @@ class StubOllamaService:
         yield type("Chunk", (), {"content": "Planner answer"})()
 
 
-class StubTool:
-    name = "web_search"
-    description = "Search"
-    input_hint = "query"
+class StubMCPToolProxy:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = "Search"
+        self.input_hint = "query"
 
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -45,9 +49,49 @@ class StubTool:
         return ToolResult(summary="no-op", sources=[])
 
 
+class StubMCPToolRegistry:
+    def __init__(self) -> None:
+        self._tools = {
+            "web_search": StubMCPToolProxy("web_search"),
+            "rag_retrieve": StubMCPToolProxy("rag_retrieve"),
+        }
+
+    def get(self, name: str):
+        return self._tools.get(name)
+
+    def specs(self) -> list[ToolSpec]:
+        return [t.spec() for t in self._tools.values()]
+
+    def first_tool_name(self) -> str | None:
+        return next(iter(self._tools.keys()), None)
+
+
 class StubSummarizer:
     async def summarize_turns(self, turns):  # type: ignore[no-untyped-def]
         return "Facts: stub"
+
+
+def _make_service(memory_service: MemoryService) -> ResearchAgentService:
+    mock_client = MagicMock(spec=MCPClient)
+    mock_client.name = "stub"
+    mock_client.specs.return_value = [
+        ToolSpec(name="web_search", description="Search", input_hint="query"),
+        ToolSpec(name="rag_retrieve", description="RAG", input_hint="query"),
+    ]
+    service = ResearchAgentService(
+        ollama_chat_service=StubOllamaService(),
+        mcp_clients=[mock_client],
+        memory_service=memory_service,
+    )
+    # Replace registry with our stub
+    registry = StubMCPToolRegistry()
+    service._tool_registry = registry
+    service._graph = build_research_graph(
+        ollama_chat_service=service._ollama_chat_service,
+        tool_registry=registry,
+        max_tool_calls=service._max_tool_calls,
+    )
+    return service
 
 
 def test_chat_session_persists_across_requests(tmp_path: Path) -> None:
@@ -58,12 +102,7 @@ def test_chat_session_persists_across_requests(tmp_path: Path) -> None:
         sqlite_store=SQLiteStore(settings=settings),
         summarizer=StubSummarizer(),
     )
-    service = ResearchAgentService(
-        ollama_chat_service=StubOllamaService(),
-        web_search_tool=StubTool(),
-        rag_tool=StubTool(),
-        memory_service=memory_service,
-    )
+    service = _make_service(memory_service)
 
     app.dependency_overrides[get_research_agent_service] = lambda: service
     client = TestClient(app)
@@ -101,12 +140,7 @@ def test_chat_memory_off_creates_no_durable_records(tmp_path: Path) -> None:
         sqlite_store=SQLiteStore(settings=settings),
         summarizer=StubSummarizer(),
     )
-    service = ResearchAgentService(
-        ollama_chat_service=StubOllamaService(),
-        web_search_tool=StubTool(),
-        rag_tool=StubTool(),
-        memory_service=memory_service,
-    )
+    service = _make_service(memory_service)
 
     app.dependency_overrides[get_research_agent_service] = lambda: service
     client = TestClient(app)

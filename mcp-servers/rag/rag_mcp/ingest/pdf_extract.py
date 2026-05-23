@@ -8,15 +8,11 @@ from typing import Any
 
 from pypdf import PdfReader
 
-from app.observability.logging_utils import log_event
-from app.schemas.rag import RagDocumentInput
+logger = logging.getLogger(__name__)
 
 
 class PdfExtractionError(RuntimeError):
     pass
-
-
-logger = logging.getLogger(__name__)
 
 
 def extract_pdf_document(
@@ -24,16 +20,14 @@ def extract_pdf_document(
     filename: str,
     url: str | None = None,
     metadata: dict[str, Any] | None = None,
-) -> RagDocumentInput:
+) -> dict[str, Any]:
+    """Extract text and metadata from a PDF.
+
+    Returns a dict with keys: id, title, text, url, metadata.
+    """
     if not file_bytes:
         raise PdfExtractionError("Uploaded file is empty")
 
-    log_event(
-        logger,
-        "rag.pdf.extract.start",
-        pdf_filename=filename,
-        file_size_bytes=len(file_bytes),
-    )
     try:
         reader = PdfReader(BytesIO(file_bytes))
         raw_text = "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
@@ -69,27 +63,14 @@ def extract_pdf_document(
         if metadata:
             combined_metadata.update(metadata)
 
-        log_event(
-            logger,
-            "rag.pdf.extract.end",
-            pdf_filename=filename,
-            page_count=len(reader.pages),
-            document_id_prefix=document_id[:12],
-        )
-        return RagDocumentInput(
-            id=document_id,
-            title=title,
-            text=raw_text,
-            url=url,
-            metadata=combined_metadata,
-        )
+        return {
+            "id": document_id,
+            "title": title,
+            "text": raw_text,
+            "url": url,
+            "metadata": combined_metadata,
+        }
     except PdfExtractionError:
         raise
     except Exception as exc:
-        log_event(
-            logger,
-            "rag.pdf.extract.error",
-            pdf_filename=filename,
-            error_type=type(exc).__name__,
-        )
         raise PdfExtractionError("Failed to parse PDF content") from exc

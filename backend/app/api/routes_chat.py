@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import lru_cache
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.graph import ResearchAgentService
@@ -16,9 +15,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@lru_cache
-def get_research_agent_service() -> ResearchAgentService:
-    return ResearchAgentService()
+def get_research_agent_service(request: Request) -> ResearchAgentService:
+    mcp_clients = getattr(request.app.state, "mcp_clients", None)
+    if not mcp_clients:
+        raise HTTPException(
+            status_code=503, detail="No MCP servers connected; service unavailable"
+        )
+    return ResearchAgentService(mcp_clients=mcp_clients)
 
 
 def _is_validation_error(exc: Exception) -> bool:
@@ -26,7 +29,7 @@ def _is_validation_error(exc: Exception) -> bool:
 
 
 def _is_provider_error(exc: Exception) -> bool:
-    return type(exc).__name__ in {"WebSearchError", "RagRetrievalError", "OllamaChatError"}
+    return type(exc).__name__ in {"MCPClientError", "OllamaChatError"}
 
 
 def _is_execution_error(exc: Exception) -> bool:

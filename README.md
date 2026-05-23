@@ -29,16 +29,16 @@ The following is the overall architecture of the Agent Tools Project.
 flowchart LR
   UI["User Interface"] <--> API["Chat API"]
   API <--> Planner["LangGraph Planner"]
-  Planner <--> Tools["Tools"]
-  Tools <--> Web["Web Search"]
-  Tools <--> RAG["RAG"]
+  Planner <--> MCP["MCP Clients"]
+  MCP <--> WS["Web Search MCP Server"]
+  MCP <--> RAGMCP["RAG MCP Server"]
   Planner --> Synthesis["Synthesis"]
   Synthesis --> API
 ```
 
 Core components:
 - **LangGraph planner**: decides whether to use tools or answer directly.
-- **Tools**: web search and RAG retrieval for external context.
+- **MCP servers**: web search and RAG retrieval exposed via Model Context Protocol.
 - **Synthesis**: Ollama chat model composes the final response.
 - **SQLite**: source of truth for sessions, turns, summaries, and checkpoints.
 - **Qdrant**: vector database for RAG chunks and durable memory embeddings.
@@ -51,19 +51,20 @@ Core components:
 
 ## Running with scripts
 
-Backend:
+Running (4 terminals):
 
 ```bash
-cd backend
-uv run -m app.main
-```
+# Terminal 1: Web Search MCP server (port 8001)
+cd mcp-servers/web-search && uv run -m web_search_mcp
 
-Frontend:
+# Terminal 2: RAG MCP server (port 8002)
+cd mcp-servers/rag && uv run -m rag_mcp
 
-```bash
-cd frontend
-npm install
-npm run dev
+# Terminal 3: Backend API (port 8000)
+cd backend && uv run -m app.main
+
+# Terminal 4: Frontend (port 3000)
+cd frontend && npm run dev
 ```
 
 ## API reference

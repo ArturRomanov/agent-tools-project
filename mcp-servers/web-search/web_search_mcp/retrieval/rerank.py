@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from app.tools.web_search import SearchResult
+from web_search_mcp.search import SearchResult
 
 _TOKEN_RE = re.compile(r"\b\w+\b")
 _RECENCY_HINT_RE = re.compile(

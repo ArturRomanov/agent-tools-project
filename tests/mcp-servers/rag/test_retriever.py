@@ -1,13 +1,16 @@
+"""Tests for RAG MCP server retriever (migrated from test_rag_retriever.py)."""
+
 import asyncio
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+RAG_DIR = ROOT_DIR / "mcp-servers" / "rag"
+if str(RAG_DIR) not in sys.path:
+    sys.path.insert(0, str(RAG_DIR))
 
-from backend.app.rag.retrieval import RagRetrievalError, RagRetriever  # noqa: E402
-from backend.app.rag.vectorstore.qdrant_store import RetrievedChunk  # noqa: E402
+from rag_mcp.retriever import RagRetrievalError, RagRetriever  # noqa: E402
+from rag_mcp.vectorstore import RetrievedChunk  # noqa: E402
 
 
 class StubEmbeddingsService:
@@ -43,7 +46,7 @@ def test_rag_retriever_happy_path() -> None:
     result = asyncio.run(retriever.retrieve("policy", max_results=5))
 
     assert len(result) == 1
-    assert result[0].url == "rag://local/doc-a"
+    assert result[0]["url"] == "rag://local/doc-a"
 
 
 def test_rag_retriever_error_translation() -> None:

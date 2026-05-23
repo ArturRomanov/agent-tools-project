@@ -1,15 +1,16 @@
+"""Tests for RAG MCP server ingest service (migrated from test_rag_ingest_service.py)."""
+
 import asyncio
 import sys
-from uuid import UUID
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+RAG_DIR = ROOT_DIR / "mcp-servers" / "rag"
+if str(RAG_DIR) not in sys.path:
+    sys.path.insert(0, str(RAG_DIR))
 
-from backend.app.rag.ingest.chunking import ChunkInput, build_chunks  # noqa: E402
-from backend.app.rag.ingest.service import RagIngestError, RagIngestService  # noqa: E402
-from backend.app.schemas.rag import RagDocumentInput  # noqa: E402
+from rag_mcp.ingest.chunking import ChunkInput, build_chunks  # noqa: E402
+from rag_mcp.ingest.service import RagIngestError, RagIngestService  # noqa: E402
 
 
 class StubEmbeddingsService:
@@ -43,20 +44,19 @@ def test_rag_ingest_service_happy_path() -> None:
         embeddings_service=StubEmbeddingsService(),  # type: ignore[arg-type]
         store=StubStore(),  # type: ignore[arg-type]
     )
-    docs = [
-        RagDocumentInput(
-            id="doc-1",
+
+    result = asyncio.run(
+        service.ingest(
+            document_id="doc-1",
             title="Doc",
             text="Paragraph one.\n\nParagraph two.",
             metadata={"source": "unit-test"},
         )
-    ]
+    )
 
-    result = asyncio.run(service.ingest(docs))
-
-    assert result.collection_name == "rag_documents"
-    assert result.indexed_documents == 1
-    assert result.indexed_chunks >= 1
+    assert result["collection_name"] == "rag_documents"
+    assert result["indexed_chunks"] >= 1
+    assert result["status"] == "ok"
 
 
 def test_rag_ingest_service_empty_vectors_error() -> None:
@@ -64,16 +64,23 @@ def test_rag_ingest_service_empty_vectors_error() -> None:
         embeddings_service=StubEmptyEmbeddingsService(),  # type: ignore[arg-type]
         store=StubStore(),  # type: ignore[arg-type]
     )
-    docs = [RagDocumentInput(id="doc-1", title="Doc", text="Body text", metadata={})]
 
     try:
-        asyncio.run(service.ingest(docs))
+        asyncio.run(
+            service.ingest(
+                document_id="doc-1",
+                title="Doc",
+                text="Body text",
+            )
+        )
         assert False, "Expected RagIngestError"
     except RagIngestError:
         assert True
 
 
 def test_chunk_point_id_is_uuid_and_deterministic() -> None:
+    from uuid import UUID
+
     chunk_input = ChunkInput(
         document_id="doc-1",
         title="Doc",

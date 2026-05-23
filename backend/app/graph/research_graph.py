@@ -15,15 +15,12 @@ from app.graph.nodes import (
     prepare_query,
 )
 from app.graph.state import AgentState
-from app.graph.tool_registry import ToolRegistry
 from app.llm.ollama_chat import OllamaChatError, OllamaChatService
+from app.mcp.client import MCPClient, MCPClientError
+from app.mcp.tool_registry import MCPToolRegistry
 from app.memory import MemoryService
 from app.observability.logging_utils import log_event, summarize_sources
-from app.rag.retrieval import RagRetrievalError
 from app.schemas.chat import ChatResponse, SourceItem, StreamEvent
-from app.tools.base import AgentTool
-from app.tools.rag_retrieve import RagRetrieveTool
-from app.tools.web_search import DuckDuckGoWebSearchTool, WebSearchError
 
 
 class AgentExecutionError(RuntimeError):
@@ -35,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def build_research_graph(
     ollama_chat_service: OllamaChatService,
-    tool_registry: ToolRegistry,
+    tool_registry: object,
     max_tool_calls: int,
 ):
     graph = StateGraph(AgentState)
@@ -95,17 +92,18 @@ class ResearchAgentService:
     def __init__(
         self,
         ollama_chat_service: OllamaChatService | None = None,
-        web_search_tool: AgentTool | None = None,
-        rag_tool: AgentTool | None = None,
         max_tool_calls: int = 2,
         memory_service: MemoryService | None = None,
+        mcp_clients: list[MCPClient] | None = None,
     ) -> None:
         self._ollama_chat_service = ollama_chat_service or OllamaChatService()
-        self._web_search_tool = web_search_tool or DuckDuckGoWebSearchTool()
-        self._rag_tool = rag_tool or RagRetrieveTool()
         self._memory_service = memory_service or MemoryService()
-        self._tool_registry = ToolRegistry.from_tools([self._web_search_tool, self._rag_tool])
         self._max_tool_calls = max_tool_calls
+
+        if not mcp_clients:
+            raise ValueError("mcp_clients must be provided (MCP is the only tool path)")
+        self._tool_registry = MCPToolRegistry(clients=mcp_clients)
+
         self._graph = build_research_graph(
             ollama_chat_service=self._ollama_chat_service,
             tool_registry=self._tool_registry,
@@ -169,7 +167,7 @@ class ResearchAgentService:
         try:
             log_event(logger, "agent.run.start", max_results=max_results)
             output: AgentState = await self._graph.ainvoke(initial_state)
-        except (AgentValidationError, WebSearchError, RagRetrievalError, OllamaChatError):
+        except (AgentValidationError, MCPClientError, OllamaChatError):
             log_event(
                 logger,
                 "agent.run.error",
@@ -387,7 +385,7 @@ class ResearchAgentService:
             )
             return
 
-        except (AgentValidationError, WebSearchError, RagRetrievalError, OllamaChatError) as exc:
+        except (AgentValidationError, MCPClientError, OllamaChatError) as exc:
             log_event(
                 logger,
                 "agent.stream.error",

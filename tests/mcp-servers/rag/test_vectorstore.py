@@ -1,13 +1,16 @@
+"""Tests for RAG MCP server QdrantStore (migrated from test_qdrant_store.py)."""
+
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+RAG_DIR = ROOT_DIR / "mcp-servers" / "rag"
+if str(RAG_DIR) not in sys.path:
+    sys.path.insert(0, str(RAG_DIR))
 
-from backend.app.rag.vectorstore import qdrant_store as qdrant_store_module  # noqa: E402
-from backend.app.config.settings import Settings  # noqa: E402
-from backend.app.rag.vectorstore.qdrant_store import QdrantStore  # noqa: E402
+from rag_mcp import vectorstore as vectorstore_module  # noqa: E402
+from rag_mcp.config import RagSettings  # noqa: E402
+from rag_mcp.vectorstore import QdrantStore  # noqa: E402
 from qdrant_client.http import models  # noqa: E402
 
 
@@ -50,7 +53,7 @@ class QueryOnlyClient:
 
 
 def test_for_collection_reuses_client() -> None:
-    settings = Settings(rag_distance_metric="cosine")
+    settings = RagSettings(rag_distance_metric="cosine")
     client = StubClient()
     base_store = QdrantStore(settings=settings, client=client, collection_name="base")
 
@@ -62,7 +65,7 @@ def test_for_collection_reuses_client() -> None:
 
 
 def test_ensure_collection_metric_normalization() -> None:
-    settings = Settings(rag_distance_metric=" COSINE ")
+    settings = RagSettings(rag_distance_metric=" COSINE ")
     client = StubClient()
     store = QdrantStore(settings=settings, client=client)
 
@@ -72,7 +75,7 @@ def test_ensure_collection_metric_normalization() -> None:
 
 
 def test_ensure_collection_unknown_metric_falls_back_to_cosine() -> None:
-    settings = Settings(rag_distance_metric="unknown-metric")
+    settings = RagSettings(rag_distance_metric="unknown-metric")
     client = StubClient()
     store = QdrantStore(settings=settings, client=client)
 
@@ -89,9 +92,9 @@ def test_local_client_cache_reuses_single_client_per_path(monkeypatch) -> None:
             self.path = path
             created_paths.append(path)
 
-    qdrant_store_module._LOCAL_CLIENTS_BY_PATH.clear()
-    monkeypatch.setattr(qdrant_store_module, "QdrantClient", FakeQdrantClient)
-    settings = Settings(qdrant_path="./.data/qdrant-cache-test")
+    vectorstore_module._LOCAL_CLIENTS_BY_PATH.clear()
+    monkeypatch.setattr(vectorstore_module, "QdrantClient", FakeQdrantClient)
+    settings = RagSettings(qdrant_path="./.data/qdrant-cache-test")
 
     store_a = QdrantStore(settings=settings)
     store_b = QdrantStore(settings=settings)
@@ -103,7 +106,7 @@ def test_local_client_cache_reuses_single_client_per_path(monkeypatch) -> None:
 
 
 def test_search_uses_query_points_when_search_absent() -> None:
-    settings = Settings()
+    settings = RagSettings()
     store = QdrantStore(settings=settings, client=QueryOnlyClient())  # type: ignore[arg-type]
 
     results = store.search(query_vector=[0.1, 0.2], limit=3)

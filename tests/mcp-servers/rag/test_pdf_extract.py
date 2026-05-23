@@ -1,12 +1,15 @@
+"""Tests for RAG MCP server PDF extraction (migrated from test_pdf_extract.py)."""
+
 import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+RAG_DIR = ROOT_DIR / "mcp-servers" / "rag"
+if str(RAG_DIR) not in sys.path:
+    sys.path.insert(0, str(RAG_DIR))
 
-from backend.app.rag.ingest import pdf_extract  # noqa: E402
-from backend.app.rag.ingest.pdf_extract import PdfExtractionError, extract_pdf_document  # noqa: E402
+from rag_mcp.ingest import pdf_extract  # noqa: E402
+from rag_mcp.ingest.pdf_extract import PdfExtractionError, extract_pdf_document  # noqa: E402
 
 
 class _FakePage:
@@ -51,14 +54,14 @@ def test_extract_pdf_document_happy_path_with_metadata(monkeypatch) -> None:
         metadata={"team": "platform"},
     )
 
-    assert result.title == "Test Title"
-    assert "Page one" in result.text
-    assert result.metadata is not None
-    assert result.metadata["source_type"] == "pdf_upload"
-    assert result.metadata["filename"] == "test.pdf"
-    assert result.metadata["page_count"] == 2
-    assert result.metadata["author"] == "Test"
-    assert result.metadata["team"] == "platform"
+    assert result["title"] == "Test Title"
+    assert "Page one" in result["text"]
+    assert result["metadata"] is not None
+    assert result["metadata"]["source_type"] == "pdf_upload"
+    assert result["metadata"]["filename"] == "test.pdf"
+    assert result["metadata"]["page_count"] == 2
+    assert result["metadata"]["author"] == "Test"
+    assert result["metadata"]["team"] == "platform"
 
 
 def test_extract_pdf_document_fallback_title_from_filename(monkeypatch) -> None:
@@ -75,7 +78,7 @@ def test_extract_pdf_document_fallback_title_from_filename(monkeypatch) -> None:
         file_bytes=b"fake-pdf-bytes",
         filename="internal_guide.pdf",
     )
-    assert result.title == "internal_guide"
+    assert result["title"] == "internal_guide"
 
 
 def test_extract_pdf_document_empty_text_raises(monkeypatch) -> None:
