@@ -10,8 +10,8 @@ if str(ROOT_DIR) not in sys.path:
 
 from backend.app.api.routes_chat import get_research_agent_service  # noqa: E402
 from backend.app.main import app  # noqa: E402
+from backend.app.mcp.client import MCPClientError  # noqa: E402
 from backend.app.schemas.chat import ChatResponse, SourceItem, StreamEvent  # noqa: E402
-from backend.app.tools.web_search import WebSearchError  # noqa: E402
 
 
 class FakeResearchAgentService:
@@ -28,9 +28,10 @@ class FakeResearchAgentService:
         memory_mode: str = "off",
         checkpoint_id: str | None = None,
         request_id: str | None = None,
+        callbacks=None,
     ) -> ChatResponse:
         if self._fail_run:
-            raise WebSearchError("tool failed")
+            raise MCPClientError("tool failed")
         return ChatResponse(
             answer="Result answer",
             sources=[
@@ -53,9 +54,10 @@ class FakeResearchAgentService:
         memory_mode: str = "off",
         checkpoint_id: str | None = None,
         request_id: str | None = None,
+        callbacks=None,
     ):
         if self._fail_stream:
-            raise WebSearchError("tool failed")
+            raise MCPClientError("tool failed")
         yield StreamEvent(
             type="tool_selected", data={"tool": "web_search", "input": query}
         )
@@ -97,6 +99,9 @@ def test_post_chat_happy_path() -> None:
 
 
 def test_post_chat_validation_error() -> None:
+    app.dependency_overrides[get_research_agent_service] = lambda: (
+        FakeResearchAgentService()
+    )
     client = TestClient(app)
     response = client.post(
         "/chat",
@@ -105,6 +110,7 @@ def test_post_chat_validation_error() -> None:
     )
     assert response.status_code == 422
     assert response.headers["X-Request-ID"] == "req-validation"
+    app.dependency_overrides.clear()
 
 
 def test_post_chat_provider_error_maps_to_502() -> None:
@@ -149,9 +155,13 @@ def test_post_chat_stream_happy_path() -> None:
 
 
 def test_post_chat_stream_validation_error() -> None:
+    app.dependency_overrides[get_research_agent_service] = lambda: (
+        FakeResearchAgentService()
+    )
     client = TestClient(app)
     response = client.post("/chat/stream", json={"query": "   ", "max_results": 5})
     assert response.status_code == 422
+    app.dependency_overrides.clear()
 
 
 def test_post_chat_stream_emits_error_event() -> None:

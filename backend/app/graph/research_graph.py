@@ -4,6 +4,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.nodes import (
@@ -15,15 +16,12 @@ from app.graph.nodes import (
     prepare_query,
 )
 from app.graph.state import AgentState
-from app.graph.tool_registry import ToolRegistry
 from app.llm.ollama_chat import OllamaChatError, OllamaChatService
+from app.mcp.client import MCPClient, MCPClientError
+from app.mcp.tool_registry import MCPToolRegistry
 from app.memory import MemoryService
 from app.observability.logging_utils import log_event, summarize_sources
-from app.rag.retrieval import RagRetrievalError
 from app.schemas.chat import ChatResponse, SourceItem, StreamEvent
-from app.tools.base import AgentTool
-from app.tools.rag_retrieve import RagRetrieveTool
-from app.tools.web_search import DuckDuckGoWebSearchTool, WebSearchError
 
 
 class AgentExecutionError(RuntimeError):
@@ -35,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def build_research_graph(
     ollama_chat_service: OllamaChatService,
-    tool_registry: ToolRegistry,
+    tool_registry: object,
     max_tool_calls: int,
 ):
     graph = StateGraph(AgentState)
@@ -95,17 +93,18 @@ class ResearchAgentService:
     def __init__(
         self,
         ollama_chat_service: OllamaChatService | None = None,
-        web_search_tool: AgentTool | None = None,
-        rag_tool: AgentTool | None = None,
         max_tool_calls: int = 2,
         memory_service: MemoryService | None = None,
+        mcp_clients: list[MCPClient] | None = None,
     ) -> None:
         self._ollama_chat_service = ollama_chat_service or OllamaChatService()
-        self._web_search_tool = web_search_tool or DuckDuckGoWebSearchTool()
-        self._rag_tool = rag_tool or RagRetrieveTool()
         self._memory_service = memory_service or MemoryService()
-        self._tool_registry = ToolRegistry.from_tools([self._web_search_tool, self._rag_tool])
         self._max_tool_calls = max_tool_calls
+
+        if not mcp_clients:
+            raise ValueError("mcp_clients must be provided (MCP is the only tool path)")
+        self._tool_registry = MCPToolRegistry(clients=mcp_clients)
+
         self._graph = build_research_graph(
             ollama_chat_service=self._ollama_chat_service,
             tool_registry=self._tool_registry,
@@ -135,6 +134,7 @@ class ResearchAgentService:
         checkpoint_id: str | None = None,
         user_scope: str = "default",
         request_id: str | None = None,
+        callbacks: list[BaseCallbackHandler] | None = None,
     ) -> ChatResponse:
         started_at = time.perf_counter()
         context_pack = await self._memory_service.prepare_context(
@@ -168,8 +168,13 @@ class ResearchAgentService:
 
         try:
             log_event(logger, "agent.run.start", max_results=max_results)
-            output: AgentState = await self._graph.ainvoke(initial_state)
-        except (AgentValidationError, WebSearchError, RagRetrievalError, OllamaChatError):
+            invoke_config: dict = {}
+            if callbacks:
+                invoke_config["callbacks"] = callbacks
+            output: AgentState = await self._graph.ainvoke(
+                initial_state, config=invoke_config if invoke_config else None
+            )
+        except (AgentValidationError, MCPClientError, OllamaChatError):
             log_event(
                 logger,
                 "agent.run.error",
@@ -195,7 +200,9 @@ class ResearchAgentService:
             sources,
             memory_context=output.get("memory_context"),
         )
-        synthesis_response = await self._ollama_chat_service.generate(request)
+        synthesis_response = await self._ollama_chat_service.generate(
+            request, callbacks=callbacks
+        )
         final_answer = synthesis_response.content.strip()
         try:
             persistence = await self._memory_service.persist_after_run(
@@ -248,6 +255,7 @@ class ResearchAgentService:
         checkpoint_id: str | None = None,
         user_scope: str = "default",
         request_id: str | None = None,
+        callbacks: list[BaseCallbackHandler] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         started_at = time.perf_counter()
         context_pack = await self._memory_service.prepare_context(
@@ -296,7 +304,14 @@ class ResearchAgentService:
                     },
                 )
 
-            async for update in self._graph.astream(initial_state, stream_mode="updates"):
+            stream_config: dict = {}
+            if callbacks:
+                stream_config["callbacks"] = callbacks
+            async for update in self._graph.astream(
+                initial_state,
+                config=stream_config if stream_config else None,
+                stream_mode="updates",
+            ):
                 if not isinstance(update, dict):
                     continue
 
@@ -345,7 +360,7 @@ class ResearchAgentService:
 
             request = build_chat_request(query, sources, memory_context=memory_context)
             answer_parts: list[str] = []
-            async for chunk in self._ollama_chat_service.stream(request):
+            async for chunk in self._ollama_chat_service.stream(request, callbacks=callbacks):
                 answer_parts.append(chunk.content)
                 yield StreamEvent(type="token", data={"text": chunk.content})
 
@@ -387,7 +402,7 @@ class ResearchAgentService:
             )
             return
 
-        except (AgentValidationError, WebSearchError, RagRetrievalError, OllamaChatError) as exc:
+        except (AgentValidationError, MCPClientError, OllamaChatError) as exc:
             log_event(
                 logger,
                 "agent.stream.error",

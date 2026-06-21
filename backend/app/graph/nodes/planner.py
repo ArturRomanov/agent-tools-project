@@ -7,7 +7,6 @@ import time
 from app.config.settings import get_settings
 from app.graph.planner_schema import PlannerDecision
 from app.graph.state import AgentState
-from app.graph.tool_registry import ToolRegistry
 from app.llm.ollama_chat import ChatMessage, ChatRequest, OllamaChatService
 from app.observability.logging_utils import log_event, sanitize_text
 
@@ -45,7 +44,7 @@ def _extract_json(text: str) -> str:
 async def plan_next_step(
     state: AgentState,
     ollama_chat_service: OllamaChatService,
-    tool_registry: ToolRegistry,
+    tool_registry: object,
     max_tool_calls: int,
 ) -> AgentState:
     started_at = time.perf_counter()

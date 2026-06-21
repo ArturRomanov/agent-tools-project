@@ -1,33 +1,26 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
-from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from app.observability.logging_utils import log_event
-from app.rag.ingest import PdfExtractionError, extract_pdf_document
-from app.rag.ingest.service import RagIngestService
 from app.schemas.rag import RagIngestResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@lru_cache
-def get_rag_ingest_service() -> RagIngestService:
-    return RagIngestService()
-
-
 @router.post("/rag/documents", response_model=RagIngestResponse)
 async def ingest_documents(
+    request: Request,
     file: UploadFile = File(...),
     collection_name: str | None = Form(default=None),
     url: str | None = Form(default=None),
     metadata_json: str | None = Form(default=None),
-    service: RagIngestService = Depends(get_rag_ingest_service),
 ) -> RagIngestResponse:
     content_type = (file.content_type or "").lower()
     filename = file.filename or "document.pdf"
@@ -65,23 +58,72 @@ async def ingest_documents(
     if not file_bytes:
         raise HTTPException(status_code=422, detail="Uploaded file is empty")
 
+    mcp_clients = getattr(request.app.state, "mcp_clients", None)
+    if not mcp_clients:
+        raise HTTPException(
+            status_code=503, detail="No MCP servers connected; ingestion unavailable"
+        )
+
+    return await _ingest_via_mcp(
+        mcp_clients, file_bytes, filename, url, normalized_collection_name, user_metadata
+    )
+
+
+async def _ingest_via_mcp(
+    mcp_clients: list,
+    file_bytes: bytes,
+    filename: str,
+    url: str | None,
+    collection_name: str | None,
+    metadata: dict[str, Any] | None,
+) -> RagIngestResponse:
+    """Route ingestion through the RAG MCP server's ingest_document tool."""
+    from app.mcp.client import MCPClient
+    from mcp.types import TextContent
+
+    rag_client: MCPClient | None = None
+    for client in mcp_clients:
+        if client.has_tool("ingest_document"):
+            rag_client = client
+            break
+
+    if rag_client is None:
+        raise HTTPException(
+            status_code=502, detail="No MCP server provides the ingest_document tool"
+        )
+
+    content_b64 = base64.b64encode(file_bytes).decode("ascii")
+    arguments: dict[str, Any] = {
+        "content_base64": content_b64,
+        "filename": filename,
+    }
+    if url:
+        arguments["url"] = url
+    if collection_name:
+        arguments["collection_name"] = collection_name
+    if metadata:
+        arguments["metadata"] = json.dumps(metadata)
+
+    result = await rag_client.call_tool("ingest_document", arguments)
+
+    text_parts = []
+    for content in result.content:
+        if isinstance(content, TextContent):
+            text_parts.append(content.text)
+        elif hasattr(content, "text"):
+            text_parts.append(content.text)
+
+    raw_text = "\n".join(text_parts)
     try:
-        document = extract_pdf_document(
-            file_bytes=file_bytes,
-            filename=filename,
-            url=url,
-            metadata=user_metadata,
-        )
-        return await service.ingest(
-            documents=[document],
-            collection_name=normalized_collection_name,
-        )
-    except Exception as exc:
-        if isinstance(exc, PdfExtractionError):
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if type(exc).__name__ != "RagIngestError":
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        message = str(exc)
-        if "must not be blank" in message.lower() or "no chunks produced" in message.lower():
-            raise HTTPException(status_code=422, detail=message) from exc
-        raise HTTPException(status_code=502, detail=message) from exc
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"Invalid response from MCP server: {raw_text}")
+
+    if parsed.get("status") == "error":
+        raise HTTPException(status_code=422, detail=parsed.get("message", "Ingestion failed"))
+
+    return RagIngestResponse(
+        collection_name=parsed.get("collection_name", "unknown"),
+        indexed_documents=1,
+        indexed_chunks=parsed.get("indexed_chunks", 0),
+    )

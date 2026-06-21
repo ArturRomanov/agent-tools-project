@@ -15,10 +15,6 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float | None = Field(default=None)
     qdrant_path: str = Field(default="./.data/qdrant")
     qdrant_collection_name: str = Field(default="rag_documents")
-    rag_chunk_size: int = Field(default=800, ge=100, le=4000)
-    rag_chunk_overlap: int = Field(default=120, ge=0, le=1000)
-    rag_top_k_default: int = Field(default=5, ge=1, le=20)
-    rag_distance_metric: str = Field(default="cosine")
     log_level: str = Field(default="INFO")
     log_format: Literal["json", "plain"] = Field(default="json")
     log_payload_mode: Literal["metadata", "sanitized", "full"] = Field(default="sanitized")
@@ -31,6 +27,12 @@ class Settings(BaseSettings):
     memory_keep_recent_turns: int = Field(default=6, ge=2, le=30)
     memory_recent_turn_window: int = Field(default=12, ge=4, le=100)
     memory_top_k: int = Field(default=5, ge=1, le=20)
+    mcp_web_search_url: str = Field(default="http://localhost:8001/mcp")
+    mcp_rag_url: str = Field(default="http://localhost:8002/mcp")
+    langfuse_enabled: bool = Field(default=False)
+    langfuse_secret_key: str = Field(default="")
+    langfuse_public_key: str = Field(default="")
+    langfuse_host: str = Field(default="http://localhost:3100")
 
     @field_validator(
         "ollama_base_url",
@@ -61,22 +63,6 @@ class Settings(BaseSettings):
         if value is not None and value <= 0:
             raise ValueError("must be > 0")
         return value
-
-    @field_validator("rag_chunk_overlap")
-    @classmethod
-    def _chunk_overlap_reasonable(cls, value: int, info) -> int:
-        chunk_size = info.data.get("rag_chunk_size")
-        if chunk_size is not None and value >= chunk_size:
-            raise ValueError("must be smaller than rag_chunk_size")
-        return value
-
-    @field_validator("rag_distance_metric")
-    @classmethod
-    def _normalize_distance_metric(cls, value: str) -> str:
-        cleaned = value.strip().lower()
-        if not cleaned:
-            raise ValueError("must not be blank")
-        return cleaned
 
     def cors_allow_origins_list(self) -> list[str]:
         raw = self.cors_allow_origins.strip()
