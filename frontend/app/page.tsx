@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAudioRecorder } from "./hooks/useAudioRecorder";
+import { useTTS } from "./hooks/useTTS";
+import { MicButton } from "./components/MicButton";
+import { TTSToggle } from "./components/TTSToggle";
 
 type Message = {
   id: string;
@@ -17,6 +21,8 @@ type SourceItem = {
 type MemoryMode = "off" | "session" | "long_term";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const STT_ENABLED = process.env.NEXT_PUBLIC_STT_ENABLED === "false";
+const TTS_ENABLED = process.env.NEXT_PUBLIC_TTS_ENABLED === "false";
 
 const STREAM_ENDPOINT = "/chat/stream";
 
@@ -41,6 +47,17 @@ export default function Home() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const streamedTokenRef = useRef(false);
+  const streamedTextRef = useRef("");
+
+  const handleTranscription = useCallback(
+    (text: string) => {
+      setInput((prev) => (prev ? prev + " " + text : text));
+    },
+    [],
+  );
+
+  const recorder = useAudioRecorder({ onTranscription: handleTranscription });
+  const tts = useTTS();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -53,6 +70,7 @@ export default function Home() {
   }, []);
 
   const appendAssistantText = (text: string) => {
+    streamedTextRef.current += text;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === "assistant" && last.id.startsWith("stream-")) {
@@ -75,6 +93,7 @@ export default function Home() {
 
     setError(null);
     setSources([]);
+    streamedTextRef.current = "";
     setMessages((prev) => [
       ...prev,
       { id: `user-${Date.now()}`, role: "user", content: trimmed },
@@ -126,6 +145,9 @@ export default function Home() {
               appendAssistantText(payload.answer);
             }
             setLoading(false);
+            if (TTS_ENABLED && tts.ttsEnabled && streamedTextRef.current) {
+              tts.speakStream(streamedTextRef.current);
+            }
           } else if (eventType === "error") {
             setError(payload.message || "Streaming error.");
             setLoading(false);
@@ -166,6 +188,8 @@ export default function Home() {
       setLoading(false);
     }
   };
+
+  const speechError = (STT_ENABLED && recorder.error) || (TTS_ENABLED && tts.error);
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -240,14 +264,36 @@ export default function Home() {
               className="min-h-[96px] resize-none rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm text-black placeholder:text-zinc-400 focus:border-blue-500 focus:outline-none"
             />
             <div className="flex items-center justify-between text-xs text-zinc-500">
-              <span>{input.trim().length} characters</span>
-              <button
-                type="submit"
-                disabled={loading}
-                className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? "Sending…" : "Send"}
-              </button>
+              <div className="flex items-center gap-2">
+                <span>{input.trim().length} characters</span>
+                {speechError && (
+                  <span className="text-rose-600">{speechError}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {TTS_ENABLED && (
+                  <TTSToggle
+                    enabled={tts.ttsEnabled}
+                    onToggle={tts.toggle}
+                    speaking={tts.speaking}
+                  />
+                )}
+                {STT_ENABLED && (
+                  <MicButton
+                    status={recorder.status}
+                    onStart={recorder.start}
+                    onStop={recorder.stop}
+                    disabled={loading}
+                  />
+                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? "Sending…" : "Send"}
+                </button>
+              </div>
             </div>
           </form>
         </section>

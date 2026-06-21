@@ -28,6 +28,7 @@ class FakeResearchAgentService:
         memory_mode: str = "off",
         checkpoint_id: str | None = None,
         request_id: str | None = None,
+        callbacks=None,
     ) -> ChatResponse:
         if self._fail_run:
             raise MCPClientError("tool failed")
@@ -53,6 +54,7 @@ class FakeResearchAgentService:
         memory_mode: str = "off",
         checkpoint_id: str | None = None,
         request_id: str | None = None,
+        callbacks=None,
     ):
         if self._fail_stream:
             raise MCPClientError("tool failed")

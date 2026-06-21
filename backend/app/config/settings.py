@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     memory_top_k: int = Field(default=5, ge=1, le=20)
     mcp_web_search_url: str = Field(default="http://localhost:8001/mcp")
     mcp_rag_url: str = Field(default="http://localhost:8002/mcp")
+    langfuse_enabled: bool = Field(default=False)
+    langfuse_secret_key: str = Field(default="")
+    langfuse_public_key: str = Field(default="")
+    langfuse_host: str = Field(default="http://localhost:3100")
 
     @field_validator(
         "ollama_base_url",

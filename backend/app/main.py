@@ -10,6 +10,7 @@ from .api.routes_health import router as health_router
 from .api.routes_rag import router as rag_router
 from .config import configure_logging, get_settings
 from .mcp.client import MCPClient
+from .observability import init_langfuse, shutdown_langfuse
 
 settings = get_settings()
 configure_logging(settings)
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_langfuse(settings)
+
     web_search_client = MCPClient(
         name="web-search", server_url=settings.mcp_web_search_url
     )
@@ -61,6 +64,8 @@ async def lifespan(app: FastAPI):
     )
 
     yield
+
+    shutdown_langfuse()
 
     for ctx in reversed(contexts):
         try:

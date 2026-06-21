@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from typing import Literal
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field, field_validator
@@ -73,7 +74,11 @@ class OllamaChatService:
             temperature=self._settings.ollama_temperature,
         )
 
-    async def generate(self, request: ChatRequest) -> ChatResponse:
+    async def generate(
+        self,
+        request: ChatRequest,
+        callbacks: list[BaseCallbackHandler] | None = None,
+    ) -> ChatResponse:
         started_at = time.perf_counter()
         client = self._resolve_client(request)
         prompt_excerpt = sanitize_text(
@@ -88,7 +93,12 @@ class OllamaChatService:
             prompt_excerpt=prompt_excerpt,
         )
         try:
-            response = await client.ainvoke(self._to_langchain_messages(request.messages))
+            invoke_kwargs: dict = {}
+            if callbacks:
+                invoke_kwargs["config"] = {"callbacks": callbacks}
+            response = await client.ainvoke(
+                self._to_langchain_messages(request.messages), **invoke_kwargs
+            )
         except Exception as exc:
             log_event(
                 logger,
@@ -118,7 +128,11 @@ class OllamaChatService:
             metadata=getattr(response, "response_metadata", None),
         )
 
-    async def stream(self, request: ChatRequest) -> AsyncIterator[StreamChunk]:
+    async def stream(
+        self,
+        request: ChatRequest,
+        callbacks: list[BaseCallbackHandler] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
         started_at = time.perf_counter()
         client = self._resolve_client(request)
         chunk_count = 0
@@ -133,7 +147,12 @@ class OllamaChatService:
             ),
         )
         try:
-            async for chunk in client.astream(self._to_langchain_messages(request.messages)):
+            stream_kwargs: dict = {}
+            if callbacks:
+                stream_kwargs["config"] = {"callbacks": callbacks}
+            async for chunk in client.astream(
+                self._to_langchain_messages(request.messages), **stream_kwargs
+            ):
                 content = self._extract_content(chunk)
                 if not content:
                     continue

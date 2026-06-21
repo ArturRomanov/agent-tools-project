@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.graph import ResearchAgentService
 from app.observability.context import get_request_id
+from app.observability.langfuse_tracing import create_langfuse_handler, langfuse_attributes
 from app.observability.logging_utils import log_event
 from app.schemas.chat import ChatRequest, ChatResponse, StreamEvent
 
@@ -45,6 +46,7 @@ async def run_chat(
     payload: ChatRequest,
     service: ResearchAgentService = Depends(get_research_agent_service),
 ) -> ChatResponse:
+    request_id = get_request_id()
     log_event(
         logger,
         "api.chat.run.start",
@@ -52,16 +54,20 @@ async def run_chat(
         max_results=payload.max_results,
         freshness=payload.freshness,
     )
+    handler = create_langfuse_handler(trace_id=request_id)
+    callbacks = [handler] if handler else None
     try:
-        response = await service.run(
-            payload.query,
-            max_results=payload.max_results,
-            freshness=payload.freshness,
-            session_id=payload.session_id,
-            memory_mode=payload.memory_mode,
-            checkpoint_id=payload.checkpoint_id,
-            request_id=get_request_id(),
-        )
+        with langfuse_attributes(session_id=payload.session_id, tags=["chat", "run"]):
+            response = await service.run(
+                payload.query,
+                max_results=payload.max_results,
+                freshness=payload.freshness,
+                session_id=payload.session_id,
+                memory_mode=payload.memory_mode,
+                checkpoint_id=payload.checkpoint_id,
+                request_id=request_id,
+                callbacks=callbacks,
+            )
         log_event(
             logger,
             "api.chat.run.end",
@@ -113,6 +119,7 @@ async def run_chat_stream(
     payload: ChatRequest,
     service: ResearchAgentService = Depends(get_research_agent_service),
 ) -> StreamingResponse:
+    request_id = get_request_id()
     log_event(
         logger,
         "api.chat.stream.start",
@@ -120,27 +127,31 @@ async def run_chat_stream(
         max_results=payload.max_results,
         freshness=payload.freshness,
     )
+    handler = create_langfuse_handler(trace_id=request_id)
+    callbacks = [handler] if handler else None
 
     async def event_generator():
         event_counts: dict[str, int] = {}
         try:
-            async for event in service.stream(
-                payload.query,
-                max_results=payload.max_results,
-                freshness=payload.freshness,
-                session_id=payload.session_id,
-                memory_mode=payload.memory_mode,
-                checkpoint_id=payload.checkpoint_id,
-                request_id=get_request_id(),
-            ):
-                event_counts[event.type] = event_counts.get(event.type, 0) + 1
-                log_event(
-                    logger,
-                    "api.chat.stream.event",
-                    route="/chat/stream",
-                    event_type=event.type,
-                )
-                yield _serialize_sse_event(event)
+            with langfuse_attributes(session_id=payload.session_id, tags=["chat", "stream"]):
+                async for event in service.stream(
+                    payload.query,
+                    max_results=payload.max_results,
+                    freshness=payload.freshness,
+                    session_id=payload.session_id,
+                    memory_mode=payload.memory_mode,
+                    checkpoint_id=payload.checkpoint_id,
+                    request_id=request_id,
+                    callbacks=callbacks,
+                ):
+                    event_counts[event.type] = event_counts.get(event.type, 0) + 1
+                    log_event(
+                        logger,
+                        "api.chat.stream.event",
+                        route="/chat/stream",
+                        event_type=event.type,
+                    )
+                    yield _serialize_sse_event(event)
             log_event(
                 logger,
                 "api.chat.stream.end",

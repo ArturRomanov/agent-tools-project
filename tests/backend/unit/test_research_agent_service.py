@@ -80,14 +80,14 @@ class StubOllamaService:
         self.generate_outputs = generate_outputs or []
         self.stream_chunks = stream_chunks or ["Syn", "thesis"]
 
-    async def generate(self, request):
+    async def generate(self, request, callbacks=None):
         if self.generate_outputs:
             content = self.generate_outputs.pop(0)
         else:
             content = '{"action":"final_answer","final_answer":"Synthesis answer"}'
         return OllamaChatResponse(content=content, model="gpt-oss:120b")
 
-    async def stream(self, request):
+    async def stream(self, request, callbacks=None):
         for chunk in self.stream_chunks:
             yield StreamChunk(content=chunk)
 

@@ -22,13 +22,13 @@ from backend.app.storage import SQLiteStore  # noqa: E402
 
 
 class StubOllamaService:
-    async def generate(self, request):
+    async def generate(self, request, callbacks=None):
         return OllamaChatResponse(
             content='{"action":"final_answer","final_answer":"Planner answer"}',
             model="gpt-oss:120b",
         )
 
-    async def stream(self, request):
+    async def stream(self, request, callbacks=None):
         yield type("Chunk", (), {"content": "Planner answer"})()
 
 

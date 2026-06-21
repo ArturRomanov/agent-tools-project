@@ -1,7 +1,7 @@
 # Agent Tools Project
 
 A simple example of the agent with **LangGraph**, **FastAPI**, **Qdrant**, **SQLite** and **Ollama**.
-The example uses **Retrieval-Augmented Generation** and **Web Search** for the tools.
+The example uses **Retrieval-Augmented Generation** and **Web Search** for the tools, with optional **Speech-to-Text** and **Text-to-Speech** services.
 
 ## Table of Contents
 
@@ -34,6 +34,8 @@ flowchart LR
   MCP <--> RAGMCP["RAG MCP Server"]
   Planner --> Synthesis["Synthesis"]
   Synthesis --> API
+  UI -.-> STT["STT Service"]
+  UI -.-> TTS["TTS Service"]
 ```
 
 Core components:
@@ -42,12 +44,15 @@ Core components:
 - **Synthesis**: Ollama chat model composes the final response.
 - **SQLite**: source of truth for sessions, turns, summaries, and checkpoints.
 - **Qdrant**: vector database for RAG chunks and durable memory embeddings.
+- **STT Service** *(optional)*: Dockerized speech-to-text service for voice input.
+- **TTS Service** *(optional)*: Dockerized text-to-speech service for spoken responses.
 
 ## Prerequisites
 
 - Python 3.12 and UV
 - Ollama
 - Node.js
+- Docker *(only for optional STT/TTS services)*
 
 ## Running with scripts
 
@@ -67,6 +72,20 @@ cd backend && uv run -m app.main
 cd frontend && npm run dev
 ```
 
+**Optional** — Speech services (Terminal 5):
+
+```bash
+# Terminal 5: STT (port 8003) + TTS (port 8004)
+cd services && docker compose up
+```
+
+To enable speech features in the frontend, set these environment variables before starting the frontend:
+
+```bash
+NEXT_PUBLIC_STT_ENABLED=true
+NEXT_PUBLIC_TTS_ENABLED=true
+```
+
 ## API reference
 
 | Method | Path | Description | Request | Response |
@@ -74,3 +93,5 @@ cd frontend && npm run dev
 | POST | `/chat` | Non-streaming chat response | JSON | JSON answer + sources |
 | POST | `/chat/stream` | Streaming chat response | JSON | SSE events + answer |
 | POST | `/rag/documents` | Index documents for RAG | JSON + file upload | JSON response status |
+| POST | `/transcribe` | Speech-to-text *(STT service, port 8003)* | Audio file | JSON transcription |
+| POST | `/synthesize` | Text-to-speech *(TTS service, port 8004)* | JSON text | Audio file |
